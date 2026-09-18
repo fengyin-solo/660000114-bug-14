@@ -6,60 +6,89 @@ import { CursorOverlay } from './components/CursorOverlay';
 import { Dashboard } from './components/Dashboard';
 import { useWhiteboardStore } from './store/whiteboard';
 import { socketService } from './services/socket';
-import { Board, BoardElement, CursorPosition, Layer, CanvasTransform, ViewType } from './types';
+import { boardApi } from './services/api';
+import { saveViewport } from './services/viewport';
+import { Board, BoardElement, CursorPosition, Layer, ViewType } from './types';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [activeBoard, setActiveBoard] = useState<Board | null>(null);
-  const {
-    setBoard, updateCursor, removeCursor, setCursors, username
-  } = useWhiteboardStore();
+  const username = useWhiteboardStore((s) => s.username);
 
   useEffect(() => {
-    if (currentView === 'board' && activeBoard) {
-      setBoard(activeBoard);
+    if (currentView !== 'board' || !activeBoard) return;
 
-      socketService.connect();
-      socketService.joinBoard(activeBoard._id, username);
+    // Register synchronously with the dashboard snapshot plus its persisted
+    // viewport. openBoard applies board + saved scale/pan in one state
+    // update, so the first paint never flashes identity or a previous
+    // board's view ("jump to old position").
+    const boardId = activeBoard._id;
+    useWhiteboardStore.getState().openBoard(activeBoard);
 
-      socketService.onUserJoined((data) => {
-        console.log(`${data.username} 加入了白板`);
-      });
-      socketService.onUserLeft((data) => {
-        removeCursor(data.socketId);
-      });
-      socketService.onActiveUsers((users) => {
-        setCursors(users);
-      });
-      socketService.onCursorUpdate((data: CursorPosition) => {
-        updateCursor(data);
-      });
-      socketService.onElementAdded((data: { element: BoardElement; layerIndex: number }) => {
-        const { board: currentBoard } = useWhiteboardStore.getState();
-        if (currentBoard) {
-          const layers = [...currentBoard.layers];
-          layers[data.layerIndex] = {
-            ...layers[data.layerIndex],
-            elements: [...layers[data.layerIndex].elements, data.element]
-          };
-          setBoard({ ...currentBoard, layers });
-        }
-      });
-      socketService.onLayersUpdated((data: { layers: Layer[] }) => {
-        const { board: currentBoard } = useWhiteboardStore.getState();
-        if (currentBoard) {
-          setBoard({ ...currentBoard, layers: data.layers });
-        }
-      });
-      socketService.onCanvasTransformed((data: { transform: CanvasTransform }) => {
-        useWhiteboardStore.getState().setCanvasTransform(data.transform);
-      });
+    socketService.connect();
+    socketService.joinBoard(boardId, username);
 
-      return () => {
-        socketService.disconnect();
-      };
-    }
-  }, [currentView, activeBoard]);
+    socketService.onUserJoined((data) => {
+      console.log(`${data.username} 加入了白板`);
+    });
+    socketService.onUserLeft((data) => {
+      useWhiteboardStore.getState().removeCursor(data.socketId);
+    });
+    socketService.onActiveUsers((users: CursorPosition[]) => {
+      useWhiteboardStore.getState().setCursors(users);
+    });
+    socketService.onCursorUpdate((data: CursorPosition) => {
+      useWhiteboardStore.getState().updateCursor(data);
+    });
+    socketService.onElementAdded((data: { element: BoardElement; layerIndex: number }) => {
+      useWhiteboardStore.getState().mergeRemoteElement(data.element, data.layerIndex);
+    });
+    socketService.onElementUpdated((data: { elementId: string; updates: Partial<BoardElement> }) => {
+      useWhiteboardStore.getState().applyRemoteElementUpdate(data.elementId, data.updates);
+    });
+    socketService.onElementDeleted((data: { elementId: string }) => {
+      useWhiteboardStore.getState().removeRemoteElement(data.elementId);
+    });
+    socketService.onLayersUpdated((data: { layers: Layer[] }) => {
+      useWhiteboardStore.getState().replaceLayers(data.layers);
+    });
+
+    // Pull the authoritative latest board (elements persisted by other
+    // sessions), but keep the locally restored viewport so opening from the
+    // workbench shows content at the same zoom/pan relationship. Local
+    // elements missing from the snapshot (optimistic draws that the server
+    // had not debounce-saved yet) are unioned in instead of discarded.
+    let cancelled = false;
+    boardApi.getBoard(boardId).then((latest) => {
+      if (cancelled) return;
+      const state = useWhiteboardStore.getState();
+      if (state.board?._id !== boardId || !latest) return;
+
+      const localLayers = state.board.layers;
+      const mergedLayers = latest.layers.map((remoteLayer, i) => {
+        const localLayer = localLayers[i];
+        if (!localLayer) return remoteLayer;
+        const remoteIds = new Set(remoteLayer.elements.map((el) => el.id));
+        const localOnly = localLayer.elements.filter((el) => !remoteIds.has(el.id));
+        return localOnly.length
+          ? { ...remoteLayer, elements: [...remoteLayer.elements, ...localOnly] }
+          : remoteLayer;
+      });
+      state.setBoard({ ...latest, layers: mergedLayers });
+    }).catch((err) => {
+      console.error('Failed to refresh board data:', err);
+    });
+
+    return () => {
+      cancelled = true;
+      // Persist final viewport before tearing the session down.
+      const state = useWhiteboardStore.getState();
+      if (state.board) saveViewport(boardId, state.canvasTransform);
+      socketService.leaveBoard(boardId);
+      socketService.disconnect();
+      useWhiteboardStore.getState().closeBoard();
+    };
+  }, [currentView, activeBoard, username]);
 
   const handleBoardSelect = (boardItem: Board) => {
     setActiveBoard(boardItem);
@@ -71,7 +100,7 @@ const App: React.FC = () => {
     setActiveBoard(null);
   };
 
-  if (currentView === 'dashboard') {
+  if (currentView === 'dashboard' || !activeBoard) {
     return <Dashboard onBoardSelect={handleBoardSelect} />;
   }
 
@@ -119,7 +148,7 @@ const App: React.FC = () => {
           fontWeight: 600,
           color: '#1a1a1a',
         }}>
-          {activeBoard?.name}
+          {activeBoard.name}
         </div>
       </div>
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

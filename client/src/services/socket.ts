@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { CursorPosition, BoardElement, Layer, CanvasTransform } from '../types';
+import { CursorPosition, BoardElement, Layer } from '../types';
 
 const SERVER_URL = '/';
 
@@ -33,6 +33,10 @@ class SocketService {
   joinBoard(boardId: string, username: string): void {
     this.boardId = boardId;
     this.socket?.emit('join-board', { boardId, username });
+  }
+
+  leaveBoard(boardId: string): void {
+    this.socket?.emit('leave-board', { boardId });
   }
 
   moveCursor(x: number, y: number): void {
@@ -77,17 +81,11 @@ class SocketService {
     }
   }
 
-  canvasTransform(transform: CanvasTransform): void {
-    if (this.boardId) {
-      this.socket?.emit('canvas-transform', { boardId: this.boardId, transform });
-    }
-  }
-
   onUserJoined(callback: (data: { socketId: string; username: string }) => void): void {
     this.socket?.on('user-joined', callback);
   }
 
-  onUserLeft(callback: (data: { socketId: string; username: string }) => void): void {
+  onUserLeft(callback: (data: { socketId: string; username?: string }) => void): void {
     this.socket?.on('user-left', callback);
   }
 
@@ -103,11 +101,11 @@ class SocketService {
     this.socket?.on('element-added', callback);
   }
 
-  onElementUpdated(callback: (data: { elementId: string; updates: Partial<BoardElement>; layerIndex: number }) => void): void {
+  onElementUpdated(callback: (data: { elementId: string; updates: Partial<BoardElement>; layerIndex?: number }) => void): void {
     this.socket?.on('element-updated', callback);
   }
 
-  onElementDeleted(callback: (data: { elementId: string; layerIndex: number }) => void): void {
+  onElementDeleted(callback: (data: { elementId: string; layerIndex?: number }) => void): void {
     this.socket?.on('element-deleted', callback);
   }
 
@@ -121,10 +119,6 @@ class SocketService {
 
   onLayersUpdated(callback: (data: { layers: Layer[] }) => void): void {
     this.socket?.on('layers-updated', callback);
-  }
-
-  onCanvasTransformed(callback: (data: { transform: CanvasTransform }) => void): void {
-    this.socket?.on('canvas-transformed', callback);
   }
 
   off(event: string, callback?: (...args: unknown[]) => void): void {
