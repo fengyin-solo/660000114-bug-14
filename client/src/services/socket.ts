@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { CursorPosition, BoardElement, Layer, CanvasTransform } from '../types';
+import { CursorPosition, BoardElement, Layer } from '../types';
 
 const SERVER_URL = '/';
 
@@ -59,27 +59,9 @@ class SocketService {
     }
   }
 
-  addStickyNote(note: BoardElement, layerIndex: number): void {
-    if (this.boardId) {
-      this.socket?.emit('add-sticky-note', { boardId: this.boardId, note, layerIndex });
-    }
-  }
-
-  addShape(shape: BoardElement, layerIndex: number): void {
-    if (this.boardId) {
-      this.socket?.emit('add-shape', { boardId: this.boardId, shape, layerIndex });
-    }
-  }
-
   updateLayers(layers: Layer[]): void {
     if (this.boardId) {
       this.socket?.emit('layer-update', { boardId: this.boardId, layers });
-    }
-  }
-
-  canvasTransform(transform: CanvasTransform): void {
-    if (this.boardId) {
-      this.socket?.emit('canvas-transform', { boardId: this.boardId, transform });
     }
   }
 
@@ -99,6 +81,11 @@ class SocketService {
     this.socket?.on('cursor-update', callback);
   }
 
+  /** Full board snapshot sent on join (existing drawing data + layers). */
+  onBoardSync(callback: (data: { layers: Layer[] }) => void): void {
+    this.socket?.on('board-sync', callback);
+  }
+
   onElementAdded(callback: (data: { element: BoardElement; layerIndex: number }) => void): void {
     this.socket?.on('element-added', callback);
   }
@@ -111,20 +98,8 @@ class SocketService {
     this.socket?.on('element-deleted', callback);
   }
 
-  onStickyNoteAdded(callback: (data: { note: BoardElement; layerIndex: number }) => void): void {
-    this.socket?.on('sticky-note-added', callback);
-  }
-
-  onShapeAdded(callback: (data: { shape: BoardElement; layerIndex: number }) => void): void {
-    this.socket?.on('shape-added', callback);
-  }
-
   onLayersUpdated(callback: (data: { layers: Layer[] }) => void): void {
     this.socket?.on('layers-updated', callback);
-  }
-
-  onCanvasTransformed(callback: (data: { transform: CanvasTransform }) => void): void {
-    this.socket?.on('canvas-transformed', callback);
   }
 
   off(event: string, callback?: (...args: unknown[]) => void): void {
